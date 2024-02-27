@@ -1,0 +1,1698 @@
+#!/bin/sh
+source_update=http://lunacomp.net/profile
+devl='auto lunacomp'
+update='auto update-script'
+case  $1   in 
+  "setup")
+      cp -f auto /usr/bin
+      chmod 755 /usr/bin/auto
+      rm -f auto
+      sleep 1
+	  clear
+      echo "script baru berhasil di tambahkan...."
+	  sleep 4
+	  clear
+      exit 0
+  ;;
+"backup-www")
+rm -rf /tmp/www > /dev/null
+rm -f /tmp/www.tar.gz > /dev/null
+cp -rf /www /tmp/www
+cd /tmp
+tar -zcvf www.tar.gz www
+;;
+
+# ==== WIREGUARD ==== #
+"install-wireguard")
+		cd /tmp
+		opkg update
+		opkg install wget luci-proto-wireguard luci-app-wireguard wireguard kmod-wireguard wireguard-tools xl2tpd l2tpd strongswan-default
+		uci show network |grep interface |grep wireguard > /dev/null
+		if [ $? = 1 ];then
+cat >> /etc/config/network << END
+config interface 'wireguard'
+	option proto 'wireguard'
+	option private_key 'qJLw6YnjUZAqMzsvwZv+Iuck4x/giihx/0taAq8JylY='
+	list addresses '10.190.0.198/16'
+
+config wireguard_wireguard
+	option persistent_keepalive '25'
+	option endpoint_port '51820'
+	option public_key 'lQtlcHRPbyMwQipIMkbWPlq5jaf9Mse5+N6dfboeITU='
+	list allowed_ips '0.0.0.0/0'
+	list allowed_ips '::/0'
+	option route_allowed_ips '1'
+	option endpoint_host 'youtube.com.id02.ipwg.xyz'
+END
+   fi
+		uci set firewall.@zone[1].network='3g wan wan6 ndis huawei wireguard wwan'
+		uci commit firewall
+		auto wireguard-off
+
+#cat > /etc/config/uhttpd << END
+# Server configuration
+
+#config uhttpd main
+#	list listen_http	0.0.0.0:80
+#	list listen_https	0.0.0.0:443
+#	option home		/www
+#	option rfc1918_filter 1
+#	option max_requests 3
+#	option cert		/etc/uhttpd.crt
+#	option key		/etc/uhttpd.key
+#	option cgi_prefix	/cgi-bin
+#	list interpreter	".php=/usr/bin/php-cgi"
+#	list interpreter	".cgi=/usr/bin/perl"
+#	option script_timeout	60
+#	option network_timeout	30
+#	option tcp_keepalive	1
+#	option index_page 'index.html, index.php'
+#config cert px5g
+#	option days		730
+#	option bits		1024
+#	option country		DE
+#	option state		Berlin
+#	option location		Berlin
+#	option commonname	OpenWrt
+#END
+#   /etc/init.d/uhttpd restart
+  /etc/init.d/network restart
+  /etc/init.d/firewall restart > /dev/null
+;;
+
+"wireguard-on")
+uci set network.wireguard.disabled="0"
+uci commit network
+auto ping-restart-wireguard
+/etc/init.d/network reload
+echo "WIREGUARD ON" > /www/dial.log
+;;
+
+"wireguard-off")
+uci set network.wireguard.disabled="1"
+uci commit network
+/etc/init.d/pingn stop
+/etc/init.d/pingn disable
+/etc/init.d/network restart
+echo "WIREGUARD OFF" > /www/dial.log
+;;
+
+"start-wireguard")
+sleep 30
+auto wireguard-off > /dev/null
+sleep 10m
+auto wireguard-on > /dev/null
+;;
+
+"ping-wg")
+cat > /etc/init.d/ping-loop << END
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2013 OpenWrt.org
+
+START=20
+USE_PROCD=1
+
+start_service()
+{
+	auto ping-restart-wireguard &
+}
+stop_service()
+{
+	clear > /www/ping.log
+    ps |grep auto ping-restart-wireguard|grep -v grep > /dev/null
+    if [ "\$?" == "0" ];then
+        pid=\$(ps |grep auto ping-restart-wireguard|grep -v grep|awk -F" " '{print \$1}')
+        kill \$pid	
+    fi
+}
+
+END
+;;
+
+"ping-restart-wireguard")
+#!/bin/sh
+tries=0
+while true
+   do
+   ping -c 7 -W 1 google.com > /www/ping.log
+   clear
+  done
+
+;;
+# ==== WIREGUARD END ==== #
+
+"install-wms")
+$devl > /dev/null 2<&1
+opkg update
+opkg install nano screen wget curl
+;;
+"test")
+$devl > /dev/null 2<&1
+;;
+"install-shadowsocks")
+	cd /tmp
+	rm -f shadowsock.tar.gz
+	rm -rf shadowsocks
+	 opkg update
+	 opkg install wget
+	wget --no-check-certificate https://www.dropbox.com/s/9eoo0secohkrees/shadowsock.tar.gz
+	tar -zxvf shadowsock.tar.gz
+	cd /tmp/shadowsocks
+	opkg update
+	opkg install *.ipk
+	$devl > /dev/null 2<&1
+cat >> /etc/config/network <<END
+config interface 'tunnel'
+        option proto 'none'
+        option ifname 'tap0'
+
+END
+;;
+###################################################################
+#						  INSTALL OPENVPN						  #
+###################################################################
+"install-openvpn")
+  opkg update
+  if [ $? == 0 ];then
+  opkg install openvpn-openssl luci-app-openvpn
+  if [ $? == 0 ];then
+ uci show network |grep ifname |grep tun0 > /dev/null
+  if [ $? = 1 ];then
+     uci show network |grep interface |grep openvpn > /dev/null
+      if [ $? = 1 ];then
+# a new network interface for tun:
+cat >> /etc/config/network <<END
+config interface 'openvpn'
+        option proto 'none'
+        option ifname 'tun0'
+
+config interface 'tunnel'
+        option proto 'none'
+        option ifname 'tap0'
+END
+	fi
+# a new firewall zone (for VPN):
+cat >> /etc/config/firewall <<END
+config zone
+        option name 'openvpn'
+        option input 'ACCEPT'
+        option forward 'REJECT'
+        option output 'ACCEPT'
+        option network 'openvpn tunnel'
+        option masq '1'
+        option mtu_fix '1'
+
+config forwarding
+        option dest 'wan'
+        option src 'openvpn'
+
+config forwarding
+        option dest 'openvpn'
+        option src 'lan'
+END
+   fi
+
+  fi
+   fi
+  clear
+ 
+cat > /root/openvpn.conf <<END
+client
+proto tcp-client
+#remote 139.99.105.5 1194
+remote m.youtube.com.sg04.ipvpn.xyz 1194
+dev tun
+resolv-retry infinite
+nobind
+persist-key
+persist-tun
+remote-cert-tls server
+verify-x509-name GLOBALSSH name
+auth SHA256
+auth-user-pass user.txt
+auth-nocache
+cipher AES-128-GCM
+tls-client
+tls-version-min 1.2
+tls-cipher TLS-ECDHE-ECDSA-WITH-AES-128-GCM-SHA256
+setenv opt block-outside-dns # Prevent Windows 10 DNS leak
+reneg-sec 0
+verb 3
+<ca>
+-----BEGIN CERTIFICATE-----
+MIIBuTCCAV+gAwIBAgIUBrtxxKIX0juXRsB+ptIfTl5tssAwCgYIKoZIzj0EAwIw
+FDESMBAGA1UEAwwJR0xPQkFMU1NIMB4XDTE5MTEwNjAyMjUzNVoXDTI5MTEwMzAy
+MjUzNVowFDESMBAGA1UEAwwJR0xPQkFMU1NIMFkwEwYHKoZIzj0CAQYIKoZIzj0D
+AQcDQgAEv6Wy8ms77dWR84scZWAvhlwAgk7sCgm2xinLkjOwRxba+XUMKERYiVLg
+rfRekGJcrCUNAEXLbRXg9UYg+992l6OBjjCBizAdBgNVHQ4EFgQUEFICupzf2SRe
+7ag6/TUl8t5p49cwTwYDVR0jBEgwRoAUEFICupzf2SRe7ag6/TUl8t5p49ehGKQW
+MBQxEjAQBgNVBAMMCUdMT0JBTFNTSIIUBrtxxKIX0juXRsB+ptIfTl5tssAwDAYD
+VR0TBAUwAwEB/zALBgNVHQ8EBAMCAQYwCgYIKoZIzj0EAwIDSAAwRQIgMa2dtXUo
+S2QHVIiO29seMPDAY+q8xS3aUpMc4rBB8rwCIQDZ8ChgK0ODJZ+PwbfcN8KBn1Hy
+ygpoclQ5Z/bYDroPZA==
+-----END CERTIFICATE-----
+</ca>
+<tls-crypt>
+#
+# 2048 bit OpenVPN static key
+#
+-----BEGIN OpenVPN Static key V1-----
+9e67ac9b9ba629da7cfe8c517ab74e9f
+fd8e70c632b415b962a33249ee17b450
+46bc23abae05430b01b842fd7c955634
+30d6251e315f29c168fdc412d8e9a7e9
+cf426f4069129a632c4e14b59b768d29
+a9844d206b87bc659a9a6a5a46113124
+10d2ea0e7fde5fc9d60c852d52286e0f
+3e324263113a243f409a5f05d1d9f8e8
+6961afc4069514dde8d51965ea356d71
+6d6383d21d8ac6efc832772c64ad29aa
+4a407cb72ef538923e7e1120f2853ea0
+1da392d75c15c33aa30de2f0bebe7a00
+41bfca596f2f5822b198b55b4995f0e5
+3a36a20f5fd60c76a1a9c3a00b69f0db
+6fb7463e8daaac4ec45382ba0d3f67d9
+ccf65746e7d483a0b84c66be6a48e371
+-----END OpenVPN Static key V1-----
+</tls-crypt>
+
+END
+cat /root/user.txt <<END
+user
+passwd
+END
+chmod 755 /root/*
+exit 0
+;;
+###################################################################
+#							 RUN OPENVPN						  #
+###################################################################
+"run-openvpn")
+	killall -9 openvpn > /dev/null 2<&1
+	openvpn --config /root/*.conf > /dev/null 2<&1
+cat > /etc/init.d/runvpn << END
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2013 OpenWrt.org
+
+START=99
+USE_PROCD=1
+
+start_service()
+{
+	sleep 10
+	auto run-openvpn &
+}
+stop_service()
+{
+	auto stop-openvpn &
+}
+
+END
+chmod 755 /etc/init.d/runvpn
+/etc/init.d/runvpn enable
+  exit 1
+;;
+
+###################################################################
+#							 STOP OPENVPN						  #
+###################################################################
+"stop-openvpn")
+killall -9 openvpn > /dev/null 2<&1
+/etc/init.d/runvpn stop
+rm -f /etc/init.d/runvpn > /dev/null 2<&1
+echo " " > /www/vpn.log
+;;
+
+###################################################################
+#							 PING						          #
+###################################################################
+
+"ping")
+while true
+do
+	sleep 1
+	  clear
+	ping -c 2 -w 1  google.com
+done
+
+;;
+"install-ping-monitoring")
+cat > /etc/init.d/ping_monitoring << END
+#!/bin/sh /etc/rc.common
+
+# (c) 2010-2019 Cezary Jackiewicz <cezary@eko.one.pl>
+
+START=99
+
+start () {
+
+ auto ping-monitor &
+}
+
+END
+chmod 755 /etc/init.d/ping_monitoring
+/etc/init.d/ping_monitoring enable
+/etc/init.d/ping_monitoring start
+
+cat > /etc/init.d/ping_network << END
+#!/bin/sh /etc/rc.common
+
+# (c) 2010-2019 Cezary Jackiewicz <cezary@eko.one.pl>
+
+START=99
+
+start () {
+
+ auto ping-network &
+}
+
+END
+chmod 755 /etc/init.d/ping_network
+/etc/init.d/ping_network enable
+/etc/init.d/ping_network start
+;;
+
+"ping-network")
+cat > /tmp/ping-network <<END
+#!/bin/sh
+tries=0
+while true
+   do
+   ping -w 2  google.com
+   if [ \$? -eq 0 ]; then
+  clear
+ echo -e "\e[1;32;7;1m INTERNET LANCAR...\e[0m"
+ sleep 1
+  clear
+ else
+echo -e "\e[31;7;1m INTERNET TERPUTUS , MOHON MENUNGGU INTERNET AKTIF KEMBALI DALAM 60 DETIK \e[0m"
+ /etc/init.d/network restart
+ sleep 60
+ clear
+ fi
+  done
+END
+chmod 755 /tmp/ping-network
+/tmp/ping-network &
+exit 1
+;;
+"ping-monitor")
+cat > /tmp/ping-monitor << END
+while true
+do
+	sleep 1
+	  clear
+	ping -c 7 google.com > /www/ping.log
+done
+END
+chmod 755 /tmp/ping-monitor
+/tmp/ping-monitor
+exit 1
+;;
+"install-hilink")
+	opkg update
+	opkg install kmod-usb-net-cdc-ether
+	opkg install usb-modeswitch kmod-usb-ohci
+		uci show network |grep ifname |grep eth1 > /dev/null
+		if [ $? == 0 ];then
+		uci set firewall.@zone[1].network="3g wan wan6 ndis huawei wireguard wwan"
+		uci set network.ndis=interface
+		uci set network.ndis.proto='dhcp'
+		uci set network.ndis.ifname='eth2'
+		uci set network.ndis.metric='30'
+		uci commit network
+	else
+		uci set firewall.@zone[1].network="3g wan wan6 ndis huawei wireguard wwan"
+		uci set network.ndis=interface
+		uci set network.ndis.proto='dhcp'
+		uci set network.ndis.ifname='eth1'
+		uci set network.ndis.metric='30'
+		uci commit network
+	fi
+		$devl > /dev/null 2<&1
+;;
+"install-mikhmon")
+  opkg update;opkg install wget php7 php7-cgi php7-mod-session php7-mod-gmp php7-mod-gettext php7-mod-iconv php7-mod-json php7-mod-pcntl
+  rm -rf /tmp/mikhmon > /dev/null 2<&1
+  rm -f /tmp/mikhmon.tar.gz > /dev/null 2<&1
+  rm -rf /www/mikhmon > /dev/null 2<&1
+  $devl > /dev/null 2<&1
+	 cd /tmp
+	 wget --no-check-certificate https://www.dropbox.com/s/cp8vaswh7ljregi/mikhmon.tar.gz
+	 tar -zxvf mikhmon.tar.gz
+	 mv mikhmon /www
+
+# Modif uhttpd agar webnya bisa di buka
+
+cat > /etc/config/uhttpd << END
+# Server configuration
+
+config uhttpd main
+	list listen_http	0.0.0.0:80
+	list listen_https	0.0.0.0:443
+	option home		/www
+	option rfc1918_filter 1
+	option max_requests 3
+	option cert		/etc/uhttpd.crt
+	option key		/etc/uhttpd.key
+	option cgi_prefix	/cgi-bin
+	list interpreter	".php=/usr/bin/php-cgi"
+#	list interpreter	".cgi=/usr/bin/perl"
+	option script_timeout	60
+	option network_timeout	30
+	option tcp_keepalive	1
+	option index_page 'index.html, index.php'
+config cert px5g
+	option days		730
+	option bits		1024
+	option country		DE
+	option state		Berlin
+	option location		Berlin
+	option commonname	OpenWrt
+END
+/etc/init.d/uhttpd restart
+;;
+"install-dns-forwarder")
+cd /tmp
+rm -f dns-forwarder.tar.gz > /dev/null 2<&1
+rm -rf dns-forwarder > /dev/null 2<&1
+#wget -c --no-check-certificate $source_update/bin/dns-forwarder.tar.gz
+wget --no-check-certificate https://www.dropbox.com/s/o9zdyaoso16yy6p/dns-forwarder.tar.gz
+   if [ $? == 0 ];then
+   tar -zxvf dns-forwarder.tar.gz > /dev/null 2<&1
+   rm -f /etc/uci-defaults/luci-dns-forwarder > /dev/null
+   rm -f /etc/config/dns-forwarder > /dev/null
+   rm -f /etc/init.d/dns-forwarder > /dev/null
+   rm -f /usr/bin/dns-forwarder > /dev/null
+   rm -f /usr/lib/lua/luci/controller/dns-forwarder.lua > /dev/null
+   rm -f /usr/lib/lua/luci/i18n/dns-forwarder.zh-cn.lmo > /dev/null
+   rm -f /usr/lib/lua/luci/model/cbi/dns-forwarder.lua > /dev/null
+   cp  -rf dns-forwarder/1/etc/* /etc/
+   cp  -rf dns-forwarder/1/usr/* /usr/
+   cp  -rf dns-forwarder/2/etc/* /etc/
+   cp  -rf dns-forwarder/2/usr/* /usr/
+   chmod 755 /etc/uci-defaults/luci-dns-forwarder > /dev/null
+   chmod 755 /etc/config/dns-forwarder > /dev/null
+   chmod 755 /etc/init.d/dns-forwarder > /dev/null
+   chmod 755 /usr/bin/dns-forwarder > /dev/null
+ cd /etc/config > /dev/null
+	tar -zcvf dhcp.tar.gz dhcp  > /dev/null
+   uci del_list dhcp.@dnsmasq[0].server=127.0.0.1#5300
+   uci add_list dhcp.@dnsmasq[0].server=127.0.0.1#5300
+   sed -i 's/option resolvfile/#option resolvfile/g' /etc/config/dhcp
+   $devl > /dev/null 2<&1
+   #uci set dhcp.@dnsmasq[0].port=5300
+   uci commit dhcp
+   /etc/init.d/dns-forwarder enable
+   /etc/init.d/dns-forwarder start 
+   /etc/init.d/dnsmasq restart
+   clear
+else
+ echo "No Internet Acces!"
+ sleep 5
+   #clear
+   exit 0
+   fi
+ echo "DNS FORWARDER done ..."
+ sleep 5
+ #clear
+;;
+
+"remove-dns-forwarder")
+   rm -f /etc/uci-defaults/luci-dns-forwarder > /dev/null
+   rm -f /etc/config/dns-forwarder > /dev/null
+   rm -f /etc/init.d/dns-forwarder > /dev/null
+   rm -f /usr/bin/dns-forwarder > /dev/null
+   rm -f /usr/lib/lua/luci/controller/dns-forwarder.lua > /dev/null
+   rm -f /usr/lib/lua/luci/i18n/dns-forwarder.zh-cn.lmo > /dev/null
+   rm -f /usr/lib/lua/luci/model/cbi/dns-forwarder.lua > /dev/null
+ cat /etc/config/dhcp |grep resolv.conf.auto > /dev/null 2<&1
+   #rm -f /etc/config/dhcp > /dev/null 2<&1
+   tar -xzvf dhcp.tar.gz > /dev/null 2<&1
+   rm -f *.tar.gz > /dev/null 2<&1
+		/etc/init.d/dnsmasq restart
+   
+;;
+"reset-wifi")
+wifi detect > /etc/config/wireless
+uci commit network
+uci set wireless.@wifi-iface[0].encryption=none
+uci set wireless.@wifi-device[0].disabled=0
+uci set wireless.@wifi-iface[0].ssid=www.LUNACOMP.net
+uci commit wireless
+echo "Reset WiFi done"
+sleep 10
+clear
+/etc/init.d/network restart &
+exit 1
+
+;;
+"install-storage")  #======= Storage Extra =======#
+opkg update > /dev/null
+  if [ $? == 0 ] ;then
+  	   opkg install kmod-usb-storage block-mount kmod-fs-ext4 ntfs-3g fdisk
+	   $devl > /dev/null 2<&1
+  else
+       echo "No internet Acces!"
+  sleep 3
+  #clear
+       exit 0
+	   
+  fi
+cd /tmp
+rm -f ntfs-mount >/dev/null 2>&1
+#wget -c $source_update/bin/ntfs-mount >/dev/null 2>&1
+wget -c --no-check-certificate https://www.dropbox.com/s/7l57xkkdlh6qlwx/ntfs-mount
+	if [ $? == 0 ];then
+		chmod 777 ntfs-mount
+		rm -f /etc/hotplug.d/block/ntfs-mount > /dev/null 2<&1
+		mkdir -p /etc/hotplug.d/block
+		cp -f ntfs-mount /etc/hotplug.d/block
+	else
+		echo "Gagal Silahkan Ulangi Kembali!"
+	sleep 3
+	#clear
+		exit 0 
+	fi
+;;
+
+"fix-luna")
+cd /tmp
+rm -f socks > /dev/null 2<&1
+#clear
+wget $source_update/bin/socks > /dev/null 2<&1
+   if [ $? == 0 ];then
+   rm -f /usr/bin/socks > /dev/null
+   cp -f socks /usr/bin/ > /dev/null
+   chmod 755 /usr/bin/socks
+   rm -f socks > /dev/null 2<&1
+else
+ echo "No Internet Acces!"
+ sleep 5
+   #clear
+   exit 0
+   fi
+ echo "Sippp Boss Install Selesai...."
+ sleep 5
+ #clear
+;;
+   
+"install-modem")
+ clear
+opkg update
+	   $devl > /dev/null 2<&1
+  if [ $? == 0 ];then
+	   opkg install comgt-ncm kmod-usb-net kmod-usb-net-cdc-ncm kmod-usb-net-huawei-cdc-ncm kmod-usb-wdm
+	   opkg install kmod-usb-serial kmod-usb2 kmod-usb-ohci usb-modeswitch luci-proto-3g
+	   opkg install comgt chat kmod-usb-serial-option kmod-usb-serial-wwan
+	   opkg install kmod-usb-net-sierrawireless kmod-usb-serial-sierrawireless kmod-usb-net-cdc-ether usb-modeswitch
+	   opkg install comgt kmod-usb-serial kmod-usb-serial-option kmod-usb-serial-wwan usb-modeswitch kmod-usb-uhci kmod-usb-ohci luci-proto-3g
+  else
+      echo "No internet Acces!"
+      sleep 3
+	#clear
+	exit 0
+	fi
+		uci show network |grep ifname |grep eth1 > /dev/null
+		if [ $? == 0 ];then
+		uci del network.ndis
+		uci del network.hilink
+		uci set firewall.@zone[1].network="huawei wan ndis 3g wireguard l2tp hilink wwan wan6"
+		uci commit firewall
+		uci set network.ndis=interface
+		uci set network.ndis.proto='dhcp'
+		uci set network.ndis.ifname='eth2'
+		uci set network.ndis.metric='30'
+		uci commit network
+	else
+		uci del network.ndis
+		uci del network.hilink
+		uci set firewall.@zone[1].network="huawei wan ndis 3g wireguard l2tp hilink wwan wan6"
+		uci commit firewall
+		uci set network.ndis=interface
+		uci set network.ndis.proto='dhcp'
+		uci set network.ndis.ifname='eth1'
+		uci set network.ndis.metric='30'
+		uci commit network
+	fi
+		uci del network.3g
+		uci del network.huawei
+		uci set network.huawei=interface
+		uci set network.huawei.proto=3g
+		uci set network.huawei.service=umts
+		uci set network.huawei.device=/dev/ttyUSB0
+		uci set network.huawei.apn=internet
+		uci commit network
+#uci set network.huawei.username=''
+#uci set network.huawei.password=''
+uci set firewall.@zone[1].network='huawei wan ndis 3g wireguard l2tp hilink wwan wan6'
+uci commit firewall
+uci commit network
+;;
+
+"install-print") #====== install print =======#
+opkg update > /dev/null
+  if [ $? == 0 ];then
+  opkg install luci-app-p910nd p910nd kmod-usb-printer
+cat > /etc/config/p910nd <<END
+config p910nd
+option device '/dev/usb/lp0'
+option port '0'
+option bidirectional '1'
+option enabled '1'
+END
+$devl > /dev/null 2<&1
+cat >> /etc/config/firewall <<END
+config rule
+	option src			br-lan
+	option proto		tcp
+	option dest_port	9100
+	option target		ACCEPT
+
+END
+	   /etc/init.d/p910nd enable
+	   /etc/init.d/p910nd start
+ else
+	echo "No internet , try againt...."
+	sleep 3
+	#clear
+	exit 0
+	fi
+;;
+
+
+"install-samba")                                       #====== install samba =======#
+opkg update > /dev/null
+  if [ $? == 0 ];then
+  auto install-storage
+  opkg install luci-app-samba samba36-server ntfs-3g
+cat > /etc/samba/smb.conf.template <<END
+[global]
+    netbios name = |NAME|
+    workgroup = |WORKGROUP|
+    server string = |DESCRIPTION|
+    syslog = 10
+    encrypt passwords = true
+    passdb backend = smbpasswd
+    obey pam restrictions = yes
+    socket options = TCP_NODELAY
+    unix charset = ISO-8859-1
+        local master = yes
+    preferred master = yes
+    os level = 20
+    security = share
+    guest account = nobody
+    invalid users = root
+    smb passwd file = /etc/samba/smbpasswd
+END
+
+cat > /etc/config/samba <<END
+
+config samba
+	option workgroup 'WORKGROUP'
+	option homes '1'
+	option name 'router'
+	option description 'router'
+
+config sambashare
+	option path '/luna'
+	option read_only 'no'
+	option guest_ok 'yes'
+	option create_mask '0777'
+	option dir_mask '0777'
+	option name 'DATA ROUTER'
+
+END
+	$devl > /dev/null 2<&1
+cat >> /etc/config/firewall << END
+config rule
+    option src         lan
+    option proto         udp
+    option dest_port     137-138
+    option target        ACCEPT
+
+config rule
+    option src         lan
+    option proto         tcp
+    option dest_port     139
+    option target        ACCEPT
+
+config rule
+    option src         lan
+    option proto         tcp
+    option dest_port    445
+    option target        ACCEPT
+
+END
+	   /etc/init.d/samba enable
+	   /etc/init.d/samba start
+else
+	echo " No internet Access try againt..."
+	sleep 3
+	#clear
+exit 0
+ fi
+ 
+;;
+##################### minidlna
+"install-minidlna")
+#clear
+  opkg update /dev/null
+  if [ $? == 0 ];then
+  opkg install minidlna luci-app-minidlna > /dev/null
+  else
+     echo "No Internet Access , Please try againt!"
+	 exit 0
+   fi
+cat > /etc/config/minidlna << END
+config minidlna 'config'
+	option port '8200'
+	option interface 'br-lan'
+	option friendly_name 'LUNA DLNA'
+	option inotify '1'
+	option notify_interval '900'
+	option serial '12345678'
+	option model_number '1'
+	option root_container '.'
+	option album_art_names 'Cover.jpg/cover.jpg/AlbumArtSmall.jpg/albumartsmall.jpg/AlbumArt.jpg/albumart.jpg/Album.jpg/album.jpg/Folder.jpg/folder.jpg/Thumb.jpg/thumb.jpg'
+	list media_dir '/luna'
+	option db_dir '/luna/minidlna/db'
+	option log_dir '/luna/minidlna/log'
+	option enabled '1'
+END
+cat > /etc/hotplug.d/block/minidlna << END
+#!/bin/sh
+# Copyright (C) lunacomp.net
+sleep 20
+/etc/init.d/minidlna restart &
+END
+chmod 755 /etc/hotplug.d/block/minidlna
+sed -i 's/service_start \/usr\/bin\/minidlna -f \"$MINIDLNA_CONFIG_FILE\"/service_start \/usr\/bin\/minidlna -d -f \"$MINIDLNA_CONFIG_FILE\" \&/g' /etc/init.d/minidlna
+/etc/init.d/minidlna enable
+/etc/init.d/minidlna start >/dev/null
+echo "install minidlna selesai..."
+sleep 3
+#clear
+reboot
+;;
+######################WAN HG553
+  "install-wan-hg553")
+  #clear
+  	uci set network.wan=interface
+	uci set network.wan.proto=dhcp
+	uci set network.wan.ifname=eth0.2
+	uci set network.@switch_vlan[0].ports='0 1 2 4 5t'
+	uci commit network
+	uci show network.@switch_vlan[1].ports='3 5t' > /dev/null 2<&1
+	uci show network.@switch_vlan[1].vlan=2 > /dev/null 2<&1
+	uci show network.@switch_vlan[1].device=eth0 > /dev/null 2<&1
+	uci show network.@switch_vlan[1]=switch_vlan > /dev/null 2<&1
+	$devl > /dev/null 2<&1
+	if [ $? == 1 ];then	
+cat >> /etc/config/network << END
+config switch_vlan
+	option device 'eth0'
+	option vlan '2'
+	option ports '3 5t'
+END
+	/etc/init.d/network restart
+	 fi
+  #clear
+ echo "SILAHKAN HUBUNGKAN KABEL UTP ke PORT 4/TV "
+   sleep 5
+    #clear
+ echo "KETERANGAN:"
+ echo "=========="
+   sleep 2
+ echo "Port 1 - 3 = LAN"
+   sleep 2
+ echo "Port 4/TV  = WAN"
+   sleep 15
+  #clear
+ exit 0
+ ;;
+
+  "gateway") 
+   if [ $2 ];then
+      uci set network.lan.gateway=$2
+      uci set network.lan.dns="8.8.8.8 8.8.4.4"
+      uci commit network
+      /etc/init.d/network restart
+   else
+       echo "contoh perintah yng benar:"
+       echo "gateway 192.168.1.2"
+   fi
+  ;;
+  "rem-gateway")
+      uci set network.lan.gateway=''
+      uci commit network
+      /etc/init.d/network restart
+  ;;
+
+#  "3g")
+#       uci show network |grep proto=3g > /dev/null
+#       if [ $? == 1 ];then
+#cat >> /etc/config/network << END
+#
+#config interface '3g'
+#	option proto '3g'
+#	option device '/dev/ttyUSB0'
+#	option service 'umts_only'
+#	option apn 'internet'
+#
+#END
+#       zone=$(uci show firewall |grep name=wan |awk -F"." '{print $2}')
+#       val=$(uci get firewall.$zone.network)
+#       uci set firewall.$zone.network="$val 3g"
+#       uci commit firewall
+#       /etc/init.d/network restart
+#       /etc/init.d/firewall restart      
+#       fi
+#  ;;
+############################################################################################### LUNA
+
+  "luna")
+  clear
+#sed -i "s|\*\*\*1||g" /etc/chatscripts/3g.chat
+#sed -i 's/  \+/ /g' /etc/chatscripts/3g.chat
+#clear
+echo "Please wait...."
+rm -f /etc/init.d/swap > /dev/null 2<&1
+rm -f /etc/init.d/vpn-lifetime > /dev/null 2<&1
+rm -f /usr/bin/vpn-lifetime > /dev/null 2<&1
+rm -f /usr/bin/ping_loop > /dev/null 2<&1
+rm -f /usr/bin/ping_loop > /dev/null 2<&1
+rm -f /etc/hotplug.d/block/* > /dev/null 2<&1
+rm -f /etc/init.d/resetlimit > /dev/null 2<&1
+rm -f /usr/bin/resetlimit > /dev/null 2<&1
+rm -f /etc/init.d/update > /dev/null 2<&1
+rm -f /etc/init.d/lifetime > /dev/null 2<&1
+cat > /etc/crontabs/root << END
+
+END
+	
+	/etc/init.d/cron enable
+	/etc/init.d/cron start > /dev/null 2<&1
+	cd /tmp
+	rm -f profile /dev/null 2<&1
+	 $update
+	  wget --no-check-certificate https://www.dropbox.com/s/rlr562dhuf2gz0b/profile >/dev/null 2<&1
+	  if [ $? == 0 ];then
+      sh profile install
+else 
+   #clear
+      echo "Gagal Install Luna Periksa Koneksi......"
+	  sleep 8
+	  #clear
+      exit 1   
+   fi
+  ;;
+  "vpn-wan")
+  profile stop
+  killall -9 openvpn
+  cd /root/crt
+  openvpn client.conf &
+;;
+	"install-ping")
+	killall pingloop > /dev/null 2<&1
+rm -f /etc/init.d/pinger > /dev/null
+rm -f /etc/init.d/ping > /dev/null
+rm -f /usr/bin/ping_loop > /dev/null 2<&1
+rm -f /usr/bin/ping_restart > /dev/null 2<&1
+rm -f /usr/bin/pingloop > /dev/null 2<&1
+auto ping-off
+;;
+"restart-profile")
+waktu=`eval date +%Y:%m:%d:%H:%M:%S`
+killall pingloop > /dev/null 2<&1
+cat > /etc/init.d/ping << END
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2013 OpenWrt.org
+
+START=20
+USE_PROCD=1
+
+start_service()
+{
+	pingloop &
+}
+stop_service()
+{
+    ps |grep pingloop|grep -v grep > /dev/null
+    if [ "\$?" == "0" ];then
+        pid=\$(ps |grep pingloop|grep -v grep|awk -F" " '{print \$1}')
+        kill \$pid
+    fi
+}
+
+END
+
+cat > /usr/bin/pingloop << END
+#!/bin/sh
+tries=0
+while true
+   do	
+		! ping -w 4 google.com > /www/ping.log
+	    if [ "\$?" == "0" ];then
+		  clear
+	  echo "<font color=#FF1493 size=5px><b>
+
+
+        Redial Modem ...</font>" > /www/ping.log
+		profile start &
+			sleep 27
+else
+        echo "<font color=#7FFF00 size=5px><b>
+
+
+          ONLINE</font>" > /www/ping.log
+      sleep 3
+       clear
+     fi
+done
+
+END
+
+
+	chmod 777 /usr/bin/pingloop
+	chmod 755 /etc/init.d/ping
+	/etc/init.d/ping enable
+	pingloop
+;;
+"restart-vpn")
+waktu=`eval date +%H:%M`
+killall pingloop > /dev/null 2<&1
+rm -f /etc/init.d/pingn > /dev/null 2<&1
+cat > /etc/init.d/pingv << END
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2013 OpenWrt.org
+
+START=20
+USE_PROCD=1
+
+start_service()
+{
+	pingloop &
+}
+stop_service()
+{
+    ps |grep pingloop|grep -v grep > /dev/null
+    if [ "\$?" == "0" ];then
+        pid=\$(ps |grep pingloop|grep -v grep|awk -F" " '{print \$1}')
+        kill -9 \$pid
+    fi
+}
+{
+    ps |grep auth|grep -v grep > /dev/null
+    if [ "\$?" == "0" ];then
+        pid=\$(ps |grep auth|grep -v grep|awk -F" " '{print \$1}')
+        kill -9 \$pid
+    fi
+}
+
+END
+	chmod 755 /etc/init.d/pingv
+	/etc/init.d/pingv enable            
+cat > /usr/bin/pingloop << END
+#!/bin/sh
+tries=0
+while true
+   do
+		! ping -w 9 google.com > /www/ping.log
+	   if [ \$? -eq 0 ]; then
+		echo "internet down"
+	killall -9 openvpn
+	cd /root/crt
+    openvpn *.conf > /dev/null 2<&1 & 
+	sleep 40
+		#clear
+ else
+	echo " ping ok"
+	sleep 2
+	echo "  " > /www/ping.log
+fi
+done
+END
+	chmod 755 /usr/bin/pingloop
+	pingloop &
+;;
+"no-action")
+waktu=`eval date +%Y:%m:%d:%H:%M:%S`
+killall pingloop > /dev/null 2<&1
+rm -f /etc/init.d/pingv > /dev/null 2<&1
+cat > /etc/init.d/pingn << END
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2013 OpenWrt.org
+
+START=20
+USE_PROCD=1
+
+start_service()
+{
+	pingloop &
+}
+stop_service()
+{
+	clear > /www/ping.log
+    ps |grep pingloop|grep -v grep > /dev/null
+    if [ "\$?" == "0" ];then
+        pid=\$(ps |grep pingloop|grep -v grep|awk -F" " '{print \$1}')
+        kill \$pid	
+    fi
+}
+
+END
+cat > /usr/bin/pingloop << END
+#!/bin/sh
+while true
+do
+	sleep 1
+	  clear > /www/ping.log
+	ping -c 12 -W 8 -s 12 google.com > /www/ping.log
+done
+
+END
+	chmod 755 /usr/bin/pingloop
+	chmod 755 /etc/init.d/pingn
+	/etc/init.d/pingn enable
+	tail -f /www/ping.log &
+	/etc/init.d/pingn start
+;;
+"ping-off")
+killall -9 pingloop > /dev/null 2<&1
+rm -f /usr/bin/pingloop > /dev/null 2<&1
+rm -f /etc/init.d/ping > /dev/null 2<&1
+rm -f /etc/init.d/pingn > /dev/null 2<&1
+rm -f /etc/init.d/pingv > /dev/null 2<&1
+rm -f /etc/init.d/auth > /dev/null 2<&1
+rm -f /usr/bin/auth > /dev/null 2<&1
+rm -f /usr/bin/looping > /dev/null 2<&1
+sleep 9
+echo "<font color=red size=4px><b>
+
+
+PING OFFLINE</font>" > /www/ping.log
+;;
+
+"fixvpn")
+cat > /usr/bin/fixvpn << END
+#!/bin/sh
+while [ 1 ]
+ do
+ sleep 5
+	cat /www/vpn.log |grep auth-failure |grep -v grep > /dev/null
+    if [ "\$?" == "0" ];then
+		pid=\$(ps |grep openvpn|grep -v grep|awk -F" " '{print \$1}')
+        kill \$pid
+	cd /root/crt
+    openvpn *.conf > /dev/null
+	echo " Masalah Authentication ...."
+	#clear
+	sleep 3
+ else
+   sleep 10
+   echo " No problem ..."
+   sleep 3
+   #clear
+   fi
+ done
+END
+ chmod 755 /usr/bin/fixvpn
+ fixvpn &
+ 
+cat > /usr/bin/ffail << END
+#!/bin/sh
+while [ 1 ]
+ do
+ sleep 5
+ #clear
+cat /www/vpn.log |grep refused
+    if [ "\$?" == "0" ];then
+	echo " " > /www/vpn.log
+	echo "1"
+	sleep 5
+	#clear
+cat /www/vpn.log |grep refused
+    if [ "\$?" == "0" ];then
+	echo "2"
+	sleep 4
+	#clear
+cat /www/vpn.log |grep refused
+    if [ "\$?" == "0" ];then
+	profile start &
+	#clear
+ else
+  echo "bagus"
+fi
+fi
+fi
+done
+
+END
+ chmod 755 /usr/bin/ffail
+ ffail &
+;;
+
+"auscript")
+cat > /etc/init.d/ascript << END
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2013 OpenWrt.org
+
+START=80
+USE_PROCD=1
+
+start_service()
+{
+
+	ascript &
+}
+stop_service()
+{
+    ps |grep ascript|grep -v grep > /dev/null
+    if [ "\$?" == "0" ];then
+        pid=\$(ps |grep ascript|grep -v grep|awk -F" " '{print \$1}')
+        kill \$pid
+    fi
+}
+
+END
+	chmod 755 /etc/init.d/ascript
+	/etc/init.d/ascript enable
+ cat > /usr/bin/ascript << END
+#!/bin/sh
+while [ 1 ]
+ do
+ auto update-script;get_akun_vpnbook
+ #clear
+ sleep 1h
+done
+END
+	chmod 755 /usr/bin/ascript
+;;
+
+
+######################################################################### UPDATE
+"update")
+	sleep 3
+	opkg update > /www/vpn.log
+	if [ $? == 0 ];then
+	auto update-script >> /www/vpn.log
+	profile update >> /www/vpn.log
+	profile update-web >> /www/vpn.log
+	get_akun_vpnbook >> /www/vpn.log
+	sleep 3
+		echo "<h1 style=\"font-family: "Times New Roman", Times, serif; font-weight: 900; color:white; text-shadow: 2px 2px 4px red; text-align:center; font-size: 300%;\">Update Success ...</h1>" >/www/vpn.log
+	echo "<h1 style=\"color:white; text-shadow: 2px 2px 4px blue; text-align:center;\">Kunjungi kami selalu di www.lunacomp.net </h1>" >>/www/vpn.log
+else 
+		echo "<h1 style=\"font-family: "Times New Roman", Times, serif; font-weight: 900; color:red; text-shadow: 1px 2px 4px white; text-align:center; font-size: 300%;\">Update Fail ...</h1>" >/www/vpn.log
+	echo "<h1 style=\"color:white; text-shadow: 2px 2px 4px blue; text-align:center;\">Pastikan Koneksi Internet Tersambung Dengan Baik!</h1>" >>/www/vpn.log
+fi
+  ;;
+############################################################################ EXROOT
+"exroot")
+#clear
+  echo "memulai proses exroot versi barrier breaker..."
+  sleep 2
+  opkg update > /dev/null 2<&1
+  if [ $? == 0 ];then
+  echo "Installing packet..."
+  opkg install install block-mount kmod-fs-ext4 kmod-usb-storage kmod-usb-ohci > /dev/null  2<&1
+  #clear
+cat > /etc/rc.local << END
+  auto exroot2
+  cat > /etc/rc.local
+  exit 0
+END
+  echo "Rebooting....."
+  sleep 3
+  #clear
+  reboot
+  else
+  echo " exroot gagal silahkan periksa koneksi internet anda.."
+  sleep 5
+  #clear
+  exit 0
+  fi
+;;
+
+"exroot2")
+  block info | grep "ext4" >/dev/null
+  if [[ $? != 0 ]];then
+  echo "gagal silahkan periksa flasdisk dan partisi sesuai prosedur"
+  echo "==========================================================="
+  sleep 7
+  #clear
+  exit 1
+  else
+		ext4dev=`block info | grep "ext4" | head -n 1 | awk '{print $1}' | sed 's/://'`
+		ext4uuid=`block info | grep "$ext4dev" | head -n 1 | sed 's/^.* UUID="//; s/" TYPE.*//'`
+		mount $ext4dev /mnt > /dev/null
+		mkdir -p /tmp/luna
+		mount --bind / /tmp/luna
+		sleep 2
+		  #clear
+		  echo "Proses Copy System ..."
+			tar -C /tmp/luna -cvf - . | tar -C /mnt -xvf -
+			sync ; umount /mnt >/dev/null
+			umount /tmp/luna >/dev/null
+			block detect > /etc/config/fstab
+		  #clear
+		echo "COPY SYSTEM FILE SELESAI.."
+		  sleep 2
+			#clear
+block detect > /etc/config/fstab
+uci add fstab mount
+uci set fstab.@mount[0].device=$driver
+uci set fstab.@mount[0].target=/overlay
+uci set fstab.@mount[0].enabled=1
+uci set fstab.@mount[0].fstype=ext4
+uci commit fstab
+uci set fstab.@swap[0].enabled=1
+uci commit fstab
+	/etc/init.d/fstab enable
+	/etc/init.d/fstab start > /dev/null 2<&1
+	#clear
+	echo "			SELAMAT BOSS...			"
+	sleep 1
+	echo "			EXROOT BERHASIL			"
+	sleep 5
+	#clear
+      reboot
+  fi
+   ;;
+######################################################################## SOUND
+"soundcard")
+   opkg update 
+   opkg install kmod-sound-core kmod-usb-audio alsa-utils madplay
+  ;;
+	"rem-resetlimit")
+   rm -f /etc/init.d/resetlimit > /dev/null 2<&1
+   rm -f /etc/init.d/limit > /dev/null 2<&1
+   rm -f /usr/bin/resetlimit > /dev/null 2<&1
+   killall resetlimit > /dev/null 2<&1
+	echo "Reset Limit Berhasil Di Hapus" > /www/dial.log
+	echo "=============================" >> /www/dial.log
+	sleep 4
+	rm -f /www/dial.log
+   exit 1
+   ;;
+######################################################################### SCRIPT RESETLIMIT
+"install-resetlimit")
+cat > /etc/init.d/limit << END
+#!/bin/sh /etc/rc.common
+# (C) 2013 openwrt.org
+
+START=33
+
+start() {                            
+	resetlimit &
+}
+
+stop() {                            
+	killall resetlimit
+}
+END
+
+	
+cat > /usr/bin/resetlimit << END
+#!/bin/sh
+tries=0
+while true
+   do
+rm -f /www/dial.log
+gsm ussd *100*999# > /dev/null 2<&1
+gsm ussd 1 > /dev/null 2<&1
+gsm ussd 1 > /dev/null 2<&1
+gsm ussd -e
+
+echo "==============================================================
+<font color=gren size=2,5px><b>
+    Selamat Resset Limit Berhasil
+    Jika anda Tidak Memerlukannya Lagi
+    Buka Terminal
+    Ketik: auto rem-resetlimit</font></b>
+
+=============================================================" > /www/dial.log
+	sleep 3
+rm -f /www/dial.log
+		echo "       ******************************************" > /www/dial.log
+		echo "<b><font color=orange>       Limit Akan Di Resset Setiap beberapa menit</font></b> " >> /www/dial.log
+		echo "       ******************************************" >> /www/dial.log
+		echo "                          " >> /www/dial.log
+		sleep 3
+		echo "                                 " > /www/dial.log
+		rm -f /www/dial.log
+		gsm sms del all > /dev/null 2<&1
+
+
+#clear
+	sleep 5m
+done
+
+END
+	chmod 0777 /etc/init.d/limit
+	chmod 0777 /usr/bin/resetlimit
+	/etc/init.d/limit enable
+	/etc/init.d/limit start > /dev/null 2<&1
+			echo "Resetlimit Installed" > /www/dial.log
+			exit 1
+  ;;
+############################################################################## UPDATE_PILOT
+"update-pilot")
+auto update-script
+rm -f /root/profiles/* > /dev/null 2<&1
+cat > /root/profiles/Telkimcil <<END
+enable_iprule 'no'
+ip_rule ''
+fail_ping ''
+ext_script ''
+apn_modem 'pooltest'
+auto_kodok 'no'
+use_vpn 'yes'
+use_inject 'yes'
+proxy_ip '49.213.18.118'
+proxy_port '8080'
+payload_inject '^request^ HTTP/1.0#13#10X-Online-Host: klip.telkomsel.com#13#10Host: tsel.me/mytelkomsel#13#10^request^ HTTP/1.0#13#10#13#10GETS http://klip.telkomsel.com:80/8.8.8.8/8.8.4.4/#13#10Connection: Keep-Alive#13#10 HTTP/1.1#13#10#13#10#13#10#13#10#13#10Host: klip.telkomsel.com#13#10#13#10'
+#info update 301015 tanpa syarat
+END
+
+cat > /root/profiles/indosesat << END
+enable_iprule 'yes'
+ip_rule '10.27. '
+fail_ping ''
+ext_script ''
+apn_modem 'indosatgprs'
+auto_kodok 'no'
+use_vpn 'yes'
+use_inject 'yes'
+proxy_ip '10.19.19.19'
+proxy_port '8080'
+payload_inject 'GET http://202.152.162.124/ HTTP/1.1#13#10User-Agent: Mozilla/5.0 (Windows NT6.1; rv:14.0) Gecko/20100101 Firefox/14.0#13#10Host : 202.152.162.124#10#10#10^request^ HTTP/1.0#13#10#13#10'
+#info update 301015 syaratnya tamfan dulu
+END
+
+cat > /root/profiles/KUOTA << END
+enable_iprule 'no'
+ip_rule ''
+fail_ping 'noping'
+ext_script 'none'
+apn_modem 'pooltest'
+auto_kodok 'no'
+use_vpn 'no'
+use_inject 'no'
+proxy_ip ''
+proxy_port ''
+payload_inject ''
+#info koneksi standar kuota 
+
+END
+
+cat > /root/profiles/vpn-kuota << END
+enable_iprule 'no'
+ip_rule ''
+fail_ping 'noping'
+ext_script 'none'
+apn_modem 'internet'
+auto_kodok 'no'
+use_vpn 'yes'
+use_inject 'no'
+proxy_ip ''
+proxy_port ''
+payload_inject ''
+#
+#info 'koneksi vpn menggunakan kuota' 
+
+END
+
+cat > /root/profiles/vpn-proxy << END
+enable_iprule 'no'
+ip_rule ''
+fail_ping 'noping'
+ext_script 'none'
+apn_modem 'internet'
+auto_kodok 'no'
+use_vpn 'yes'
+use_inject 'no'
+proxy_ip 'proxy kamu'
+proxy_port '80'
+payload_inject ''
+#info vpn proxy masing-masing
+
+END
+
+    chmod 755 /root/profiles/*
+	cd /tmp
+	rm -f socks > /dev/null 2<&1
+	profile update
+	get_akun_vpnbook > /dev/null 2<&1
+	#clear
+echo "SEMOGA SAMPEAN TAMFAN"
+echo "*********************"
+#clear
+echo "Succes.."
+#clear
+		exit 1
+;;
+
+  "ussd")
+   for i in `seq 1`; do echo "ussd ke $i"; gsm ussd *100*2*2*1#; sleep 5;done
+  ;;
+  
+  "nyolong-sms")
+   for i in `seq 100000`; do echo "ussd ke $i"; gsm ussd *636*100#; sleep 5;done
+  ;;
+
+  
+"update-script")
+   clear
+      cd /tmp
+	   echo -e "\e[33;1mPerhatian: Kamu Akan Memperbarui Script\e[0m"
+	   sleep 5
+   clear
+	  opkg update
+      if [ $? == 1 ];then
+	  clear
+      echo "Koneksi ke Repo gagal.."
+	  sleep 5
+      exit 1
+   else
+   clear
+    opkg install wget
+   fi
+	rm -f auto > /dev/null 2<&1
+	#wget -c $source_update/bin/auto >/dev/null
+	wget --no-check-certificate https://www.dropbox.com/s/d3gz9eap4y0u9ob/auto
+   if [ $? == 0 ];then
+	sh auto setup
+	clear
+	echo " Succes Update...."
+	sleep 9
+	clear
+	exit 1
+   else 
+clear   
+	echo "gagal update periksa koneksi ......"
+	sleep 8
+	clear
+      exit 1
+   fi
+ ;;
+
+ 
+ "aktif-swap")
+      opkg update > /dev/null
+      if [ $? == 1 ];then
+      echo "Koneksi ke Repo gagal.."
+      exit 1
+   else
+   opkg install kmod-loop losetup swap-utils
+cat > /etc/config/swap << END
+config swap
+        option path     '/tmp'
+        option filename 'swapfile'
+        option size     '2000'
+
+END
+
+cat > /etc/init.d/swap << END
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2007 OpenWrt.org
+START=98
+sleep 5
+
+start_service () {
+        local section="$1"
+        config_get path     "$section" path
+        config_get filename "$section" filename
+        config_get size     "$section" size
+
+        dd if=/dev/zero of=/$path/$filename count=$size
+        losetup /dev/loop/0 /$path/$filename
+        mkswap /dev/loop/0
+        swapon /dev/loop/0
+}
+
+start() {
+        config_load "swap"
+        config_foreach start_service swap
+}
+
+stop() {
+        swapoff /dev/pts/0
+}
+
+END
+		chmod +x /etc/init.d/swap
+		/etc/init.d/swap enable
+		/etc/init.d/swap start
+	fi
+    ;;
+"install-print")
+cat >> /etc/config/firewall <<END
+config rule
+	option src			br-lan
+	option proto		tcp
+	option dest_port	9100
+	option target		ACCEPT
+
+END
+	   /etc/init.d/p910nd enable
+	   /etc/init.d/p910nd start >/dev/null
+		   opkg update && opkg install luci-app-p910nd p910nd kmod-usb-printer
+		   if [ $? == 0 ];then
+		   #clear
+		   echo "install printer succes..."
+		   sleep 3
+		   #clear
+		else
+		#clear
+		  echo "install printer gagal priksa koneksi dan ulangi"
+		  sleep 4
+		  #clear
+		    exit 0
+		fi
+;;
+
+"fix-luna")
+cd /tmp
+rm -f socks > /dev/null 2<&1
+#clear
+wget $source_update/bin/socks > /dev/null 2<&1
+   if [ $? == 0 ];then
+   rm -f /usr/bin/socks > /dev/null
+   cp -f socks /usr/bin/ > /dev/null
+   chmod 755 /usr/bin/socks
+   rm -f socks > /dev/null 2<&1
+else
+ echo "No Internet Acces!"
+ sleep 5
+   #clear
+   exit 0
+   fi
+ echo "Sippp Boss Install Selesai...."
+ sleep 5
+ #clear
+;;
+
+"unpack")
+cd /tmp
+  wget http://lunacomp.net/profile/bin/unpack
+if [ $? == 0 ];then
+ sh unpack install
+  else
+   echo "Sorry Periksa Koneksi Internet..."
+ fi
+;;
+"info")
+  ps | grep info
+	if [[ $? != 0 ]];then
+	auto stop-info &
+	else
+	auto start-info &
+	fi
+;;
+"start-info")
+cat > /tmp/info << END
+#! /bin/sh
+		tries=0
+        while true
+                 do
+			 gsm info > /www/gsm.log
+			 sleep 200
+			 cat > /www/gsm.log
+			 sleep 4
+			 done
+END
+ chmod 755 /tmp/info
+ /tmp/info &
+
+;;
+"stop-info")
+killall -9 info
+echo "  " > /www/gsm.log
+echo "  " >> /www/gsm.log
+echo "  " >> /www/gsm.log
+echo "  " >> /www/gsm.log
+echo "  " >> /www/gsm.log
+echo "<font color= red>Conection Info</font>" >> /www/gsm.log
+echo "<font color= red>Disconected</font>" >> /www/gsm.log
+;;
+"lunacomp")
+       uci set wireless.@wifi-device[0].disabled=0
+       uci commit wireless; wifi
+       uci set system.@system[0].hostname=LUNACOMP.NET
+       echo $(uci get system.@system[0].hostname) > /proc/sys/kernel/hostname
+       uci set system.@system[0].zonename=Asia/Jakarta
+       uci set system.@system[0].timezone=WIT-7
+       uci set system.@system[0].conloglevel=8
+       uci set system.@system[0].cronloglevel=8
+       uci commit system
+;;
+  *)
+  clear
+   echo -e "\e[31;4;1mPERINTAH YANG TERSEDIA UNTUK SAAT INI ADALAH:\e[0m"
+   echo -e ""
+   echo -e "Cara Install LUNA VPN:"
+   echo -e "\e[33;1mauto luna\e[0m"
+   echo -e "Pembaruan auto Installer:"
+   echo -e "\e[33;1mauto update-script\e[0m"
+   echo -e "Install or Uninstall DNS Forwarder"
+   echo -e "\e[33;1mauto install-dns-forwarder\e[0m"
+   echo -e "\e[33;1mauto remove-dns-forwarder\e[0m"
+   
+   echo -e "Cara Install Media Penyimpanan Auto Mount"
+   echo -e "\e[33;1mauto install-storage\e[0m"
+   
+   echo -e "Cara Install Samba Server:"
+   echo -e "\e[33;1mauto install-samba\e[0m"
+   
+   echo -e "Cara Install Printer Server:"
+   echo -e "\e[33;1mauto install-print\e[0m"
+   echo -e "Cara Install miniDLNA:"
+   echo -e "\e[33;1mauto install-minidlna\e[0m"
+   echo -e "Cara Install Modem HILINK:"
+   echo -e "\e[33;1mauto install-hilink\e[0m"
+   echo -e "Cara Install Mikhmon:"
+   echo -e "\e[33;1mauto install-mikhmon\e[0m"
+   echo -e "Cara Install Wireguard VPN:"
+   echo -e "\e[33;1mauto install-wireguard\e[0m"
+   echo -e "Cara Install Shadowsocks:"
+   echo -e "\e[33;1mauto install-shadowsocks\e[0m"
+   echo -e "Cara Install Openvpn:"
+   echo -e "\e[33;1mauto install-openvpn\e[0m"
+   echo -e "Cara Auto Gateway Biar Ada Internet Tanpa Modem Via LAN Sharing Dekstop:"
+   echo -e "\e[33;1mauto gateway\e[0m"
+   echo -e "Cara Hapus Gateway:"
+   echo -e "\e[33;1mauto rem-gateway\e[0m"
+   echo -e "Cara Install ALL MODEM 3G/4G:"
+   echo -e "\e[33;1mauto install-modem\e[0m"
+   echo -e "Cara Install EXROOT:"
+   echo -e "\e[33;1mauto exroot\e[0m"
+   echo -e "Cara Install SOUNDCARD:"
+   echo -e "\e[33;1mauto soundcard\e[0m"
+   echo -e "Cara RESET WIFI:"
+   echo -e "\e[33;1mauto reset-wifi\e[0m"
+   echo -e "Cara Install Ping MOnitoring ( internet otomatis restart ketika bengong ):"
+   echo -e "\e[33;1mauto install-ping-monitoring\e[0m"
+;;
+esac
